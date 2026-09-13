@@ -25,38 +25,11 @@ def apply_quarter_names(daily_sales_df: pd.DataFrame, quarter_dates_df) -> pd.Da
     return daily_sales_df
 
 
-def add_MTD_spend(df: pd.DataFrame) -> pd.DataFrame:
-    df["MTD spend"] = df.groupby(
-        ["segment_name", df["date"].dt.year, df["date"].dt.month]
-    )["Spend (USD)"].cumsum()
-    return df
-
-
-def add_QTD_spend(df: pd.DataFrame) -> pd.DataFrame:
-    df["QTD spend"] = df.groupby(["segment_name", df["quarter_name"]])[
-        "Spend (USD)"
-    ].cumsum()
-    return df
-
-
-def add_T7D_spend(df: pd.DataFrame) -> pd.DataFrame:
-    df["T7D spend"] = (
-        df.groupby(["segment_name"])["Spend (USD)"]
-        .rolling(7, min_periods=1)
-        .sum()
-        .reset_index(level=0, drop=True)
-    )
-    return df
-
-
 def make_total(df: pd.DataFrame) -> pd.DataFrame:
 
     total = df.groupby("date", as_index=False).agg(
         {
             "Spend (USD)": "sum",
-            "MTD spend": "sum",
-            "QTD spend": "sum",
-            "T7D spend": "sum",
             # first grabs first value from grouping
             "quarter_name": "first",
             "begin_date": "first",
@@ -66,14 +39,41 @@ def make_total(df: pd.DataFrame) -> pd.DataFrame:
     return total[df.columns]
 
 
-def add_yoy(df: pd.DataFrame) -> pd.DataFrame:
-
-    df["YoY Change"] = df.groupby(
-        [
-            "segment_name",
-        ]
-    ).pct_change()
+def add_diq(df: pd.DataFrame) -> pd.DataFrame:
+    df["diq"] = (df["date"] - df["begin_date"]).dt.days + 1
+    return df
 
 
-def last_year_lookup(df: pd.Series) -> pd.Series:
-    pass
+def add_previous_quarter_year(df: pd.DataFrame) -> pd.DataFrame:
+    # There has to be a better way ... COME BACK TO THIS
+    lookup_df = df.assign(
+        **{
+            "previous_year_quarter": (
+                (df["quarter_name"].str.extract(r"(\d{4})").astype(int) - 1).astype(str)
+                + df["quarter_name"].str.extract(r"(.{2}$)")
+            )
+        }
+    )
+    yoy_df = lookup_df.merge(
+        df[
+            [
+                "segment_name",
+                "quarter_name",
+                "diq",
+            ]
+        ],
+        left_on=["segment_name", "previous_year_quarter", "diq"],
+        right_on=["segment_name", "quarter_name", "diq"],
+        how="left",
+        suffixes=("", "_ly"),
+        validate="many_to_one",
+    )
+    yoy_df = yoy_df.drop(columns="quarter_name_ly")
+    return yoy_df
+
+
+def rename_to_schema(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.rename(
+        columns={"Spend (USD)": "daily_spend", "begin_date": "quarter_start_date"}
+    )
+    return df
