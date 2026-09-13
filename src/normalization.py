@@ -47,12 +47,10 @@ def add_diq(df: pd.DataFrame) -> pd.DataFrame:
 def add_previous_quarter_year(df: pd.DataFrame) -> pd.DataFrame:
     # There has to be a better way ... COME BACK TO THIS
     lookup_df = df.assign(
-        **{
-            "previous_year_quarter": (
+        previous_year_quarter=(
                 (df["quarter_name"].str.extract(r"(\d{4})").astype(int) - 1).astype(str)
                 + df["quarter_name"].str.extract(r"(.{2}$)")
             )
-        }
     )
     yoy_df = lookup_df.merge(
         df[

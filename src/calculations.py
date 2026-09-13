@@ -1,6 +1,7 @@
 import pandas as pd
-from schema import DailySaleSchema
 from pandera.typing import DataFrame
+
+from schema import DailySaleSchema
 
 
 def add_MTD_spend(df: DataFrame[DailySaleSchema]) -> DataFrame[DailySaleSchema]:
@@ -20,7 +21,7 @@ def add_QTD_spend(df: DataFrame[DailySaleSchema]) -> DataFrame[DailySaleSchema]:
 def add_T7D_spend(df: DataFrame[DailySaleSchema]) -> DataFrame[DailySaleSchema]:
     df["t7d_spend"] = (
         df.groupby(["segment_name"])["daily_spend"]
-        .rolling(7, min_periods=1)
+        .rolling(7, min_periods=7)
         .sum()
         .reset_index(level=0, drop=True)
     )
