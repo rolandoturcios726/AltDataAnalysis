@@ -7,6 +7,8 @@ requires-python = ">=3.13"
 dependencies = [
     "openpyxl>=3.1.5",
     "pandas>=3.0.5",
+    "pandera>=0.33.1",
+    "scikit-learn>=1.9.1",
 ]
 [project.scripts]
 main = "main:main"
@@ -18,3 +20,46 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools]
 package-dir = {"" = "src"}
 py-modules = ["main"]
+
+[dependency-groups]
+dev = [
+    "pyright",
+    "ruff",
+]
+
+[tool.pyright]
+typeCheckingMode = "standard"
+pythonVersion = "3.13"
+include = ["src"]
+venvPath = "."
+venv = ".venv"
+
+[tool.ruff]
+target-version = "py313"
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "D",      # Do not require docstrings or enforce their style.
+    "ANN",    # Leave type checking to Pyright without requiring every annotation.
+    "CPY001", # Do not require a copyright header in every source file.
+    "E501",   # Let the formatter handle line wrapping where possible.
+    "T201",   # Allow print statements in this command-line analysis project.
+    "EM101",  # Allow literal exception messages.
+    "EM102",  # Allow f-string exception messages.
+    "TRY003", # Allow descriptive messages when raising exceptions.
+    # Disable rules that conflict with Ruff's formatter.
+    "W191",
+    "E111",
+    "E114",
+    "E117",
+    "Q000",
+    "Q001",
+    "Q002",
+    "Q003",
+    "COM812",
+    "COM819",
+    "ISC001",
+    "ISC002",
+]
