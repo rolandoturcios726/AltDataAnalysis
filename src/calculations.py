@@ -12,7 +12,7 @@ def add_MTD_spend(df: DataFrame[DailySaleSchema]) -> DataFrame[DailySaleSchema]:
 
 
 def add_QTD_spend(df: DataFrame[DailySaleSchema]) -> DataFrame[DailySaleSchema]:
-    df["qtd_spend"] = df.groupby(["segment_name", df["quarter_name"]])[
+    df["qtd_spend"] = df.groupby(["segment_name", "year", "quarter"])[
         "daily_spend"
     ].cumsum()
     return df
@@ -30,12 +30,12 @@ def add_T7D_spend(df: DataFrame[DailySaleSchema]) -> DataFrame[DailySaleSchema]:
 
 def _get_previous_df(df: DataFrame[DailySaleSchema]) -> DataFrame[DailySaleSchema]:
     history = df.set_index(
-        ["segment_name", "quarter_name", "diq"],
+        ["segment_name", "year", "quarter", "diq"],
         verify_integrity=True,
     )
 
-    requested_keys = pd.MultiIndex.from_frame(
-        df[["segment_name", "previous_year_quarter", "diq"]],
+    requested_keys = pd.MultiIndex.from_arrays(
+        [df["segment_name"], df["year"] - 1, df["quarter"], df["diq"]],
         names=history.index.names,
     )
 

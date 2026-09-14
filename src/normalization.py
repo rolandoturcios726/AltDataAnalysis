@@ -31,6 +31,7 @@ def make_total(df: pd.DataFrame) -> pd.DataFrame:
         {
             "Spend (USD)": "sum",
             # first grabs first value from grouping
+            "company": "first",
             "quarter_name": "first",
             "begin_date": "first",
         }
@@ -44,34 +45,15 @@ def add_diq(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def add_previous_quarter_year(df: pd.DataFrame) -> pd.DataFrame:
-    # There has to be a better way ... COME BACK TO THIS
-    lookup_df = df.assign(
-        previous_year_quarter=(
-                (df["quarter_name"].str.extract(r"(\d{4})").astype(int) - 1).astype(str)
-                + df["quarter_name"].str.extract(r"(.{2}$)")
-            )
-    )
-    yoy_df = lookup_df.merge(
-        df[
-            [
-                "segment_name",
-                "quarter_name",
-                "diq",
-            ]
-        ],
-        left_on=["segment_name", "previous_year_quarter", "diq"],
-        right_on=["segment_name", "quarter_name", "diq"],
-        how="left",
-        suffixes=("", "_ly"),
-        validate="many_to_one",
-    )
-    yoy_df = yoy_df.drop(columns="quarter_name_ly")
-    return yoy_df
+def normalize_quarters(df: pd.DataFrame) -> pd.DataFrame:
+    df[["year", "quarter"]] = df["quarter_name"].str.extract(
+        r"^(\d{4})Q([1-4])$"
+    ).astype(int)
+    return df.drop(columns="quarter_name")
 
 
 def rename_to_schema(df: pd.DataFrame) -> pd.DataFrame:
     df = df.rename(
         columns={"Spend (USD)": "daily_spend", "begin_date": "quarter_start_date"}
     )
-    return df
+    return normalize_quarters(df)

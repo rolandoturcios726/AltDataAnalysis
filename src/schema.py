@@ -6,11 +6,12 @@ from pandera.typing import Series
 
 
 class DailySaleSchema(pa.DataFrameModel):
+    company: Series[str]
     segment_name: Series[str]
     # coerce = True converts compatible date formats to the schema
     date: Series[pd.Timestamp] = pa.Field(coerce=True)
-    quarter_name: Series[str]
-    previous_year_quarter: Series[str]
+    year: Series[int]
+    quarter: Series[int] = pa.Field(ge=1, le=4)
     quarter_start_date: Series[pd.Timestamp] = pa.Field(coerce=True)
     diq: Series[int] | None
     daily_spend: Series[float] | None
