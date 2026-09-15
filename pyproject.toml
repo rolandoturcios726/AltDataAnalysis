@@ -1,7 +1,7 @@
 [project]
-name = "interval-take-home"
+name = "altdataanalysis"
 version = "0.1.0"
-description = "This is the repository for my code implementation of Interval's take home assignment."
+description = "Forecast URBN comparable-sales growth from a daily credit-card spend panel."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [

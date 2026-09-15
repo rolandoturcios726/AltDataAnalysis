@@ -1,4 +1,4 @@
-# URBN alternative-data KPI forecasting
+# AltDataAnalysis
 
 Forecast quarterly reported comparable-sales growth ("comps") for Anthropologie,
 Free People, Urban Outfitters and URBN in total from a daily credit-card spend panel.
@@ -6,9 +6,6 @@ The forecast works at any observed day of the fiscal quarter, is backtested agai
 reported actuals with no lookahead, and is compared with consensus for the
 in-progress quarter (fiscal 2027Q3, August 1 to October 31, 2026; the panel ends
 August 30, 2026, day 30 of the quarter).
-
-- **[PM_WRITEUP.docx](PM_WRITEUP.docx)**: findings for an investment-literate reader. What the panel says about each segment, where we sit versus consensus, how much to trust it.
-- **[TECHNICAL_WRITEUP.docx](TECHNICAL_WRITEUP.docx)**: pipeline design, methodology and the paths that did not work, assumptions and limitations, next steps, AI usage.
 
 ## Run
 
@@ -54,4 +51,3 @@ Rates are stored as decimals (0.062 = 6.2%). Columns ending in `_pp` are percent
 - `src/workbook.py`: builds `urbn_kpi_nowcast.xlsx` (Summary, By quarter, By day, Panel trends, Notes).
 - `src/data/`: the four source workbooks.
 - `outputs/`: generated workbooks and charts.
-- `PM_WRITEUP.docx`, `TECHNICAL_WRITEUP.docx`: the two writeups.
