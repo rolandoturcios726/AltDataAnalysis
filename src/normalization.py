@@ -1,5 +1,13 @@
 import pandas as pd
 
+# Reported KPI metric names and the panel segment each one measures.
+SEGMENTS = {
+    "Comps store sales growth - Anthropologie": "ANTHROPOLOGIE GROUP (US)",
+    "Comps store sales growth - Free people": "FREE PEOPLE (US)",
+    "Comps store sales growth - Urban outfitters": "URBAN OUTFITTERS (US)",
+    "Comps store sales growth": "Total",
+}
+
 
 def apply_quarter_names(daily_sales_df: pd.DataFrame, quarter_dates_df) -> pd.DataFrame:
     # Side Note: tried doing np.where first but didn't realize both df's have to be the same size
@@ -17,12 +25,11 @@ def apply_quarter_names(daily_sales_df: pd.DataFrame, quarter_dates_df) -> pd.Da
         .astype("string")
         .fillna("")
     )
-    daily_sales_df = daily_sales_df.merge(
-        quarter_dates_df[["quarter_name", "begin_date"]],
+    return daily_sales_df.merge(
+        quarter_dates_df[["quarter_name", "begin_date", "end_date"]],
         how="inner",
         on=["quarter_name"],
     )
-    return daily_sales_df
 
 
 def make_total(df: pd.DataFrame) -> pd.DataFrame:
@@ -31,8 +38,10 @@ def make_total(df: pd.DataFrame) -> pd.DataFrame:
         {
             "Spend (USD)": "sum",
             # first grabs first value from grouping
+            "company": "first",
             "quarter_name": "first",
             "begin_date": "first",
+            "end_date": "first",
         }
     )
     total["segment_name"] = "Total"
@@ -44,34 +53,26 @@ def add_diq(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def add_previous_quarter_year(df: pd.DataFrame) -> pd.DataFrame:
-    # There has to be a better way ... COME BACK TO THIS
-    lookup_df = df.assign(
-        previous_year_quarter=(
-                (df["quarter_name"].str.extract(r"(\d{4})").astype(int) - 1).astype(str)
-                + df["quarter_name"].str.extract(r"(.{2}$)")
-            )
+def normalize_quarters(df: pd.DataFrame) -> pd.DataFrame:
+    df[["year", "quarter"]] = (
+        df["quarter_name"].str.extract(r"^(\d{4})Q([1-4])$").astype(int)
     )
-    yoy_df = lookup_df.merge(
-        df[
-            [
-                "segment_name",
-                "quarter_name",
-                "diq",
-            ]
-        ],
-        left_on=["segment_name", "previous_year_quarter", "diq"],
-        right_on=["segment_name", "quarter_name", "diq"],
-        how="left",
-        suffixes=("", "_ly"),
-        validate="many_to_one",
-    )
-    yoy_df = yoy_df.drop(columns="quarter_name_ly")
-    return yoy_df
+    return df
 
 
 def rename_to_schema(df: pd.DataFrame) -> pd.DataFrame:
     df = df.rename(
-        columns={"Spend (USD)": "daily_spend", "begin_date": "quarter_start_date"}
+        columns={
+            "Spend (USD)": "daily_spend",
+            "begin_date": "quarter_start_date",
+            "end_date": "quarter_end_date",
+        }
     )
-    return df
+    return normalize_quarters(df)
+
+
+def normalize_kpi(df: pd.DataFrame) -> pd.DataFrame:
+    """Map a KPI workbook (actuals or estimates) onto panel segment and quarter names."""
+    df = df.rename(columns={"qtr_name": "quarter_name"})
+    df["segment_name"] = df["va_metric_name"].map(SEGMENTS.get)
+    return df[["segment_name", "quarter_name", "yoy_val"]]

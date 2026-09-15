@@ -1,48 +1,27 @@
+"""Run the whole pipeline: tidy daily panel -> KPI forecasts -> charts and PM workbook."""
+
 from pathlib import Path
 
-import pandas as pd
-
-from calculations import add_MTD_spend, add_QTD_spend, add_T7D_spend, calculate_yoy
-from normalization import (
-    add_diq,
-    add_previous_quarter_year,
-    apply_quarter_names,
-    make_total,
-    rename_to_schema,
-)
-from schema import DailySaleSchema
-
-# Adding this since path directory technically at root not src
-SCRIPT_DIR = Path(__file__).resolve().parent
-DATA_DIR = SCRIPT_DIR / "data"
+import forecasting
+import report
+from data import DATA_DIR, load_daily_data
 
 
 def main():
-    daily_sales_df = pd.read_excel(DATA_DIR / "Daily_Sales.xlsx")               
-    quarter_dates_df = pd.read_excel(DATA_DIR / "Qtr_Dates.xlsx")
+    as_of = None  # None = latest panel date, or e.g. "2026-08-15" for day 15 of 2027Q3
+    out_dir = Path("outputs")
 
-    daily_sales_df = apply_quarter_names(daily_sales_df, quarter_dates_df)
-    total_df = make_total(daily_sales_df)
+    out_dir.mkdir(exist_ok=True)
+    daily = load_daily_data(DATA_DIR)
+    daily.to_excel(out_dir / "forecasting_data.xlsx", index=False)
 
-    daily_sales_df = pd.concat([daily_sales_df, total_df], ignore_index=True)
+    panel, consensus = forecasting.load_inputs(daily, DATA_DIR)
+    sheets = forecasting.run(panel, consensus, as_of)
+    forecasting.write_sheets(sheets, out_dir / "kpi_forecasts.xlsx")
+    print(sheets["Forecast"].to_string(index=False))
 
-    daily_sales_df = add_diq(daily_sales_df)
-    daily_sales_df = add_previous_quarter_year(daily_sales_df)
-    print(daily_sales_df)
-
-    daily_sales_df = rename_to_schema(daily_sales_df)
-
-    df = DailySaleSchema.validate(daily_sales_df)
-    # print(df)
-
-    df = add_MTD_spend(df)
-    df = add_QTD_spend(df)
-    df = add_T7D_spend(df)
-    df = DailySaleSchema.validate(df)
-    df = calculate_yoy(df, ["daily_spend", "mtd_spend", "qtd_spend", "t7d_spend"])
-    df = DailySaleSchema.validate(df)
-
-    print(df.tail())
+    pm_workbook = report.run(sheets, daily, out_dir)
+    print(f"Wrote {out_dir}/*.xlsx, {pm_workbook} and {out_dir}/*.png")
 
 
 if __name__ == "__main__":

@@ -6,12 +6,15 @@ from pandera.typing import Series
 
 
 class DailySaleSchema(pa.DataFrameModel):
+    company: Series[str]
     segment_name: Series[str]
     # coerce = True converts compatible date formats to the schema
     date: Series[pd.Timestamp] = pa.Field(coerce=True)
-    quarter_name: Series[str]
-    previous_year_quarter: Series[str]
+    year: Series[int]
+    quarter: Series[int] = pa.Field(ge=1, le=4)
     quarter_start_date: Series[pd.Timestamp] = pa.Field(coerce=True)
+    quarter_end_date: Series[pd.Timestamp] = pa.Field(coerce=True)
+    quarter_name: Series[str] = pa.Field(coerce=True)
     diq: Series[int] | None
     daily_spend: Series[float] | None
     mtd_spend: Series[float] | None
@@ -25,5 +28,17 @@ class DailySaleSchema(pa.DataFrameModel):
     t7d_spend_yoy: Series[float] | None = pa.Field(nullable=True)
 
     # Adding Config so it errors when columns differ from the schema
+    class Config(pa.DataFrameModel.Config):
+        strict = True
+
+
+class KpiSchema(pa.DataFrameModel):
+    """Reported actuals or consensus estimates: one row per panel segment and fiscal quarter."""
+
+    # Unmapped metric names arrive as None and fail here instead of vanishing in a merge.
+    segment_name: Series[str]
+    quarter_name: Series[str] = pa.Field(str_matches=r"^\d{4}Q[1-4]$")
+    yoy_val: Series[float]
+
     class Config(pa.DataFrameModel.Config):
         strict = True
