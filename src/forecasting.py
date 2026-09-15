@@ -1,169 +1,161 @@
-# Followed this youtube video https://www.youtube.com/watch?v=baqxBO4PhI8
+"""Nowcast URBN reported comp-sales growth from the daily card panel.
+
+For each KPI, quarter q and day-in-quarter d:
+
+    forecast = comp[ref] + slope_d * (panel_yoy[q, d] - panel_yoy[ref, d])
+
+where ref is the latest quarter whose reported comp was available on the forecast
+date, and slope_d is fitted only on earlier quarters that were available that day.
+"""
+
+from pathlib import Path
+
 import pandas as pd
-import matplotlib.pyplot as plt
-from sklearn.linear_model import Ridge
-from sklearn.metrics import mean_absolute_error
-from normalization import normalize_quarters
-def backtest(train_df, model, predictors, start=750, step=1):
-    all_predictions = []
+from sklearn.linear_model import LinearRegression
 
-    for _, group in train_df.groupby(["company", "segment_name"]):
-        group = group.sort_values("date").dropna(
-            subset=[*predictors, "target"]
+from data import DATA_DIR, load_daily_data, load_kpi
+
+KEY = ["segment_name", "quarter_name"]
+LAG = pd.Timedelta(days=20)  # assumption: comps usable 20 days after quarter end
+MIN_TRAIN = 4  # (panel change, comp change) pairs needed before a slope is fitted
+# Scored alongside the model: repeat the reference comp, and the raw panel QTD YoY.
+METHODS = {"forecast": "model", "ref_actual": "naive", "panel_yoy": "raw_panel"}
+INPUTS = [
+    *KEY,
+    "date",
+    "diq",
+    "ref_quarter",
+    "ref_actual",
+    "panel_yoy",
+    "ref_panel_yoy",
+]
+OUTPUTS = ["panel_change", "coef", "n_train", "forecast", "actual", "error_pp"]
+
+
+def load_inputs(daily, data_dir=DATA_DIR):
+    """Daily panel rows with their reported comp, reference quarter and model inputs."""
+    # Days without a prior-year match (first panel year, leap-year tail) are excluded.
+    daily = daily.dropna(subset=["qtd_spend_yoy"])
+    daily = daily.sort_values("date").rename(columns={"qtd_spend_yoy": "panel_yoy"})
+    daily["available_date"] = daily["quarter_end_date"] + LAG
+    actuals = load_kpi(data_dir / "kpi_actuals.xlsx").rename(
+        columns={"yoy_val": "actual"}
+    )
+    panel = daily.merge(actuals, on=KEY, how="left")
+
+    # Reference quarter: the latest reported comp available on each panel date.
+    refs = (
+        daily[[*KEY, "available_date"]]
+        .drop_duplicates()
+        .merge(actuals, on=KEY)
+        .rename(
+            columns={
+                "quarter_name": "ref_quarter",
+                "actual": "ref_actual",
+                "available_date": "date",
+            }
         )
+        .sort_values("date")
+    )
+    panel = pd.merge_asof(panel, refs, on="date", by="segment_name")
 
-        for i in range(start, len(group), step):
-            train = group.iloc[:i]
-            test = group.iloc[i:i + step]
+    # The reference quarter's panel YoY at the same DIQ: a like-for-like comparison.
+    ref_yoy = daily[[*KEY, "diq", "panel_yoy"]].rename(
+        columns={"quarter_name": "ref_quarter", "panel_yoy": "ref_panel_yoy"}
+    )
+    panel = panel.merge(ref_yoy, on=["segment_name", "ref_quarter", "diq"], how="left")
+    panel["panel_change"] = panel["panel_yoy"] - panel["ref_panel_yoy"]
+    panel["comp_change"] = panel["actual"] - panel["ref_actual"]
+    consensus = load_kpi(data_dir / "kpi_ests.xlsx").rename(
+        columns={"yoy_val": "consensus"}
+    )
+    print(panel)
+    print(consensus)
+    return panel, consensus
 
-            model.fit(train[predictors], train["target"])
-            preds = model.predict(test[predictors])
 
-            combined = test[
-                ["company", "segment_name", "date", "target"]
-            ].rename(columns={"target": "actual"})
-            combined["prediction"] = preds
-            combined["diff"] = (
-                combined["prediction"] - combined["actual"]
-            ).abs()
+def fit_slope(train):
+    """Slope through the origin: a zero panel change repeats the reference comp."""
+    model = LinearRegression(fit_intercept=False)
+    return model.fit(train[["panel_change"]], train["comp_change"]).coef_[0]
 
-            all_predictions.append(combined)
 
-    return pd.concat(all_predictions, ignore_index=True)
-df = pd.read_excel("forecasting_data.xlsx")
+def forecast(panel, max_diq):
+    """Forecast every quarter at DIQ 1..max_diq using only comps available that day."""
+    rows = []
+    for _, day in panel[panel["diq"].le(max_diq)].groupby(["segment_name", "diq"]):
+        history = day.dropna(subset=["panel_change", "comp_change"])
+        for _, row in day.sort_values("quarter_name").iterrows():
+            # Lookahead guard: only quarters whose comp was public on the forecast date.
+            train = history[history["available_date"].le(row["date"])]
+            if len(train) >= MIN_TRAIN:
+                row["n_train"] = len(train)
+                row["coef"] = fit_slope(train)
+            rows.append(row)
+    out = pd.DataFrame(rows)
+    out["forecast"] = out["ref_actual"] + out["coef"] * out["panel_change"]
+    return out
 
-null_pct = df.apply(pd.isnull).sum()/df.shape[0]
-valid_columns = df.columns[null_pct < .20]
 
-df = df[valid_columns].copy()
+def score(backtest):
+    """MAE, RMSE and bias (pp) by KPI, DIQ and method, scored on identical quarters."""
+    scored = backtest.dropna(subset=["actual", "forecast"])
+    errors = scored.melt(
+        id_vars=["segment_name", "diq", "actual"],
+        value_vars=list(METHODS),
+        var_name="method",
+    )
+    errors["method"] = errors["method"].map(METHODS)
+    errors["error_pp"] = 100 * (errors["value"] - errors["actual"])
+    grouped = errors.groupby(["segment_name", "diq", "method"])["error_pp"]
+    stats = grouped.agg(
+        n="size",
+        mae_pp=lambda e: e.abs().mean(),
+        rmse_pp=lambda e: (e**2).mean() ** 0.5,
+        bias_pp="mean",
+    )
+    return stats.reset_index()
 
-df = df.sort_values(["company", "segment_name", "date"])
-df["target"] = df.groupby(["company", "segment_name"])["daily_spend"].shift(-1)
-train_df = df.dropna(subset=["target"])
 
-rr = Ridge(alpha=.1)
+def run(panel, consensus, as_of=None):
+    """Forecast every quarter as of one panel date; returns the output sheets as frames."""
+    cutoff = panel["date"].max() if as_of is None else pd.Timestamp(as_of)
+    current = panel.loc[panel["date"].eq(cutoff)]
+    if len(current) != panel["segment_name"].nunique():
+        raise ValueError(f"No complete panel day at {cutoff:%Y-%m-%d}.")
+    max_diq = current["diq"].iloc[0]  # every series shares the fiscal calendar
 
-predictors = ["daily_spend", "mtd_spend", "qtd_spend", "t7d_spend"]
-print(predictors)
+    backtest = forecast(panel, max_diq)
+    # Only show actuals that were public on the as-of date.
+    backtest["actual"] = backtest["actual"].where(backtest["available_date"].le(cutoff))
+    backtest["error_pp"] = 100 * (backtest["forecast"] - backtest["actual"])
+    latest = backtest[backtest["date"].eq(cutoff)].merge(consensus, on=KEY, how="left")
+    latest["vs_consensus_pp"] = 100 * (latest["forecast"] - latest["consensus"])
 
-predictions = backtest(train_df, rr, predictors)
-print(
-    predictions.groupby(["company", "segment_name"])["diff"].mean()
-)
+    columns = [*INPUTS, *OUTPUTS]
+    return {
+        "Forecast": latest[[*columns, "consensus", "vs_consensus_pp"]],
+        "Backtest": backtest[columns],
+        "Errors by day": score(backtest),
+    }
 
-keys = ["company", "segment_name"]
-quarter_keys = [*keys, "year", "quarter"]
-#######################################################################################
-# Everthing below was fully AI generated - making a note about this in write up
-# Each prediction is for the following day; use that day's fiscal quarter.
-predicted_days = predictions.assign(date=predictions["date"] + pd.Timedelta(days=1))
-daily = df.merge(
-    predicted_days[[*keys, "date", "prediction"]],
-    on=[*keys, "date"], how="left", validate="one_to_one",
-)
-prior_year = df[[*quarter_keys, "diq", "daily_spend"]].rename(columns={
-    "daily_spend": "prior_year_spend",
-})
-# Shift historical keys forward so each year receives the prior year's spend.
-prior_year["year"] += 1
-daily = daily.merge(
-    prior_year, on=[*quarter_keys, "diq"],
-    how="left", validate="many_to_one",
-)
-calendar = pd.read_excel("src/data/Qtr_Dates.xlsx").rename(columns={"symbol": "company"})
-calendar = normalize_quarters(calendar)
-daily = daily.merge(
-    calendar[["company", "year", "quarter", "end_date"]],
-    on=["company", "year", "quarter"], how="left", validate="many_to_one",
-)
 
-# Use completed quarters and matching DIQs, excluding the unmatched leap-year tail.
-complete = daily.groupby(quarter_keys)["date"].transform("max").eq(daily["end_date"])
-daily = daily.loc[complete & daily["prior_year_spend"].notna()]
-quarterly = daily.groupby(quarter_keys, as_index=False).agg(
-    predicted_spend=("prediction", "sum"),
-    actual_spend=("daily_spend", "sum"),
-    prior_year_spend=("prior_year_spend", "sum"),
-    days=("diq", "size"),
-    predicted_days=("prediction", "count"),
-)
-quarterly = quarterly.loc[quarterly["predicted_days"].eq(quarterly["days"])].copy()
-quarterly["predicted_panel_yoy"] = quarterly["predicted_spend"] / quarterly["prior_year_spend"] - 1
-quarterly["va_metric_name"] = quarterly["segment_name"].str.strip().map({
-    "ANTHROPOLOGIE GROUP (US)": "Comps store sales growth - Anthropologie",
-    "FREE PEOPLE (US)": "Comps store sales growth - Free people",
-    "URBAN OUTFITTERS (US)": "Comps store sales growth - Urban outfitters",
-    "Total": "Comps store sales growth",
-})
-actuals = pd.read_excel("src/data/kpi_actuals.xlsx").rename(columns={
-    "symbol": "company", "qtr_name": "quarter_name",
-})
-actuals = normalize_quarters(actuals)
-comparison = quarterly.merge(
-    actuals, on=["company", "year", "quarter", "va_metric_name"],
-    how="left", validate="one_to_one",
-)
-comparison["gap_pp"] = 100 * (comparison["predicted_panel_yoy"] - comparison["yoy_val"])
-print("\nRolling next-day panel forecasts versus reported quarterly comps:")
-print(comparison.assign(
-    quarter_name=comparison["year"].astype(str) + "Q" + comparison["quarter"].astype(str)
-)[
-    [*keys, "quarter_name", "predicted_panel_yoy", "yoy_val", "gap_pp"]
-].round(4).to_string(index=False))
+def write_sheets(sheets, path):
+    path.parent.mkdir(exist_ok=True)
+    with pd.ExcelWriter(path) as writer:
+        for name, frame in sheets.items():
+            frame.to_excel(writer, sheet_name=name, index=False, freeze_panes=(1, 0))
 
-# Fit on observed targets, then feed each future prediction into the next day's features.
-forecast_year, forecast_quarter = 2027, 3
-quarter_ends = calendar.loc[
-    calendar["year"].eq(forecast_year) & calendar["quarter"].eq(forecast_quarter)
-].set_index("company")["end_date"]
-future_rows = []
-for (company, segment), group in df.groupby(keys):
-    train = group.dropna(subset=[*predictors, "target"])
-    rr.fit(train[predictors], train["target"])
-    features = group[predictors].tail(1).copy()
-    recent_spend = group["daily_spend"].tail(7).tolist()
 
-    for date in pd.date_range(group["date"].max() + pd.Timedelta(days=1), quarter_ends[company]):
-        spend = float(rr.predict(features)[0])
-        future_rows.append((company, segment, date, spend))
-        recent_spend.append(spend)
-        features.loc[:, "daily_spend"] = spend
-        features.loc[:, "mtd_spend"] = spend if date.day == 1 else features["mtd_spend"] + spend
-        features.loc[:, "qtd_spend"] = features["qtd_spend"] + spend
-        features.loc[:, "t7d_spend"] = sum(recent_spend[-7:])
+def main():
+    as_of = None  # None = latest panel date, or e.g. "2026-08-15" for day 15 of 2027Q3
+    output = Path("outputs/kpi_forecasts.xlsx")
 
-future_predictions = pd.DataFrame(future_rows, columns=[*keys, "date", "prediction"])
-forward = future_predictions.groupby(keys)["prediction"].sum().to_frame("remaining_spend")
-forward["observed_qtd_spend"] = df.loc[
-    df["year"].eq(forecast_year) & df["quarter"].eq(forecast_quarter)
-].groupby(keys)["daily_spend"].sum()
-forward["prior_year_spend"] = df.loc[
-    df["year"].eq(forecast_year - 1) & df["quarter"].eq(forecast_quarter)
-].groupby(keys)["daily_spend"].sum()
-forward["forecast_quarter_spend"] = forward["observed_qtd_spend"] + forward["remaining_spend"]
-forward["predicted_panel_yoy"] = forward["forecast_quarter_spend"] / forward["prior_year_spend"] - 1
+    panel, consensus = load_inputs(load_daily_data(DATA_DIR), DATA_DIR)
+    sheets = run(panel, consensus, as_of)
+    write_sheets(sheets, output)
+    print(sheets["Forecast"].to_string(index=False))
 
-# Translate panel growth to reported comps using the last four observed quarterly gaps.
-recent = comparison.dropna(subset=["yoy_val"]).sort_values(["year", "quarter"]).groupby(keys).tail(4).copy()
-recent["panel_comp_gap"] = recent["yoy_val"] - (recent["actual_spend"] / recent["prior_year_spend"] - 1)
-forward = forward.join(recent.groupby(keys)["panel_comp_gap"].mean()).reset_index()
-forward["comp_forecast"] = forward["predicted_panel_yoy"] + forward["panel_comp_gap"]
-forward["year"] = forecast_year
-forward["quarter"] = forecast_quarter
-forward = forward.merge(comparison[[*keys, "va_metric_name"]].drop_duplicates(), on=keys, validate="one_to_one")
-consensus = pd.read_excel("src/data/kpi_ests.xlsx").rename(columns={
-    "symbol": "company", "qtr_name": "quarter_name", "yoy_val": "consensus",
-})
-consensus = normalize_quarters(consensus)
-forward = forward.merge(
-    consensus, on=["company", "year", "quarter", "va_metric_name"],
-    how="left", validate="one_to_one",
-)
-forward["vs_consensus_pp"] = 100 * (forward["comp_forecast"] - forward["consensus"])
-print(f"\n{forecast_year}Q{forecast_quarter} recursive forecast using observed spend through {df['date'].max():%Y-%m-%d}:")
-print(forward.assign(
-    quarter_name=forward["year"].astype(str) + "Q" + forward["quarter"].astype(str)
-)[
-    [*keys, "quarter_name", "predicted_panel_yoy", "comp_forecast", "consensus", "vs_consensus_pp"]
-].round(4).to_string(index=False))
-print("Comp forecast adds the recent panel-to-comps gap; the 62-day recursive horizon has not been backtested.")
+
+if __name__ == "__main__":
+    main()

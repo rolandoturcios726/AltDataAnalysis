@@ -4,21 +4,21 @@ from pandera.typing import DataFrame
 from schema import DailySaleSchema
 
 
-def add_MTD_spend(df: DataFrame[DailySaleSchema]) -> DataFrame[DailySaleSchema]:
+def add_mtd_spend(df: DataFrame[DailySaleSchema]) -> DataFrame[DailySaleSchema]:
     df["mtd_spend"] = df.groupby(
         ["segment_name", df["date"].dt.year, df["date"].dt.month]
     )["daily_spend"].cumsum()
     return df
 
 
-def add_QTD_spend(df: DataFrame[DailySaleSchema]) -> DataFrame[DailySaleSchema]:
+def add_qtd_spend(df: DataFrame[DailySaleSchema]) -> DataFrame[DailySaleSchema]:
     df["qtd_spend"] = df.groupby(["segment_name", "year", "quarter"])[
         "daily_spend"
     ].cumsum()
     return df
 
 
-def add_T7D_spend(df: DataFrame[DailySaleSchema]) -> DataFrame[DailySaleSchema]:
+def add_t7d_spend(df: DataFrame[DailySaleSchema]) -> DataFrame[DailySaleSchema]:
     df["t7d_spend"] = (
         df.groupby(["segment_name"])["daily_spend"]
         .rolling(7, min_periods=7)
